@@ -508,6 +508,10 @@ fn interface_language_is_validated_persisted_and_backward_compatible() {
     s.execute("prefs.set", json!({"key": "general.language", "value": "en"})).unwrap();
     s.execute("prefs.set", json!({"key": "general.language", "value": "ja"})).unwrap();
     assert_eq!(s.execute("prefs.get", json!({"key": "general.language"})).unwrap(), json!("ja"));
+    // zh-cn is registered alongside en and ja, and round-trips through the file like any other.
+    s.execute("prefs.set", json!({"key": "general.language", "value": "zh-cn"})).unwrap();
+    assert_eq!(s.execute("prefs.get", json!({"key": "general.language"})).unwrap(), json!("zh-cn"));
+    s.execute("prefs.set", json!({"key": "general.language", "value": "ja"})).unwrap();
     let saved = store.read(PREFS_FILE).unwrap();
     for bad in [json!("fr"), json!(""), json!(17), json!(null)] {
         assert!(s.execute("prefs.set", json!({"key": "general.language", "value": bad})).is_err());
@@ -522,6 +526,7 @@ fn interface_language_is_validated_persisted_and_backward_compatible() {
     assert_eq!(Prefs::from_json(r#"{"general":{"undoLevels":17}}"#).general.language, "system");
     assert_eq!(Prefs::from_json(r#"{"general":{"language":"unknown"}}"#).general.language, "system");
     assert_eq!(Prefs::from_json(r#"{"general":{"language":"en"}}"#).general.language, "en", "a chosen language stays");
+    assert_eq!(Prefs::from_json(r#"{"general":{"language":"zh-cn"}}"#).general.language, "zh-cn", "a chosen language stays");
 }
 
 #[test]

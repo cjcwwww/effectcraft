@@ -271,8 +271,20 @@ static INTER_MEDIUM: &[u8] = include_bytes!("../../../assets/fonts/Inter-Medium.
 static INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
 static JETBRAINS_MONO: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 
-/// Install fonts (Inter, Inter Medium/SemiBold, JetBrains Mono) and egui visuals.
+/// Install fonts (Inter, Inter Medium/SemiBold, JetBrains Mono) and egui visuals, with the
+/// Japanese CJK fallback. [`install_for_language`] follows the UI language instead.
 pub fn install(ctx: &egui::Context, t: &Tokens) {
+    install_for_language(ctx, t, "ja");
+}
+
+/// Install fonts and egui visuals, choosing the CJK fallback face for `language`
+/// (`crate::i18n::language`).
+pub fn install_for_language(ctx: &egui::Context, t: &Tokens, language: &str) {
+    ctx.set_fonts(build_fonts(language));
+    apply_visuals(ctx, t);
+}
+
+fn build_fonts(language: &str) -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert("inter".into(), Arc::new(FontData::from_static(INTER_REGULAR)));
     fonts.font_data.insert("inter-medium".into(), Arc::new(FontData::from_static(INTER_MEDIUM)));
@@ -283,25 +295,30 @@ pub fn install(ctx: &egui::Context, t: &Tokens) {
     fonts.families.insert(FontFamily::Name("semibold".into()), vec!["inter-semibold".into(), "inter".into()]);
     fonts.families.insert(FontFamily::Name("medium".into()), vec!["inter-medium".into(), "inter".into()]);
     // Reuse the text engine's script-aware system fallback (#84), without embedding a CJK font.
+    // The probe follows the UI language: a Japanese face can lack the Simplified-only glyphs
+    // (`汉`, `简`, `视`) a Chinese UI needs, while a Chinese face would draw shared Han the Chinese
+    // way for a Japanese UI. The text engine only returns a family that covers the character, so
+    // the Chinese probe finds the Chinese family on any platform, and no family at all when the
+    // machine has none installed.
     #[cfg(not(target_arch = "wasm32"))]
     {
         use effectcraft_text::fonts;
         let base = fonts::resolve("Inter", "Regular").face;
-        let face = fonts::face(fonts::fallback_for('あ', base));
-        if face.has_char('あ')
+        let probe = if language == "zh-cn" { '汉' } else { 'あ' };
+        let face = fonts::face(fonts::fallback_for(probe, base));
+        if face.has_char(probe)
             && let Some(font) = face.font()
         {
             // Use the already-read, parsed bytes rather than reading a font file twice.
             let mut data = FontData::from_owned(font.data().as_bytes().to_vec());
             data.index = face.info.index;
-            fonts.font_data.insert("japanese-system".into(), Arc::new(data));
+            fonts.font_data.insert("cjk-system".into(), Arc::new(data));
             for family in fonts.families.values_mut() {
-                family.push("japanese-system".into());
+                family.push("cjk-system".into());
             }
         }
     }
-    ctx.set_fonts(fonts);
-    apply_visuals(ctx, t);
+    fonts
 }
 
 pub fn apply_visuals(ctx: &egui::Context, t: &Tokens) {
@@ -358,17 +375,10 @@ pub fn apply_visuals(ctx: &egui::Context, t: &Tokens) {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod japanese_font_tests {
-    #[test]
-    fn installed_japanese_fallback_is_available_in_all_ui_families() {
-        use effectcraft_text::fonts;
-        let base = fonts::resolve("Inter", "Regular").face;
-        if !fonts::face(fonts::fallback_for('あ', base)).has_char('あ') {
-            eprintln!("no Japanese system font installed; skipping glyph coverage");
-            return;
-        }
-        let ctx = egui::Context::default();
-        super::install(&ctx, &super::Tokens::for_kind(super::ThemeKind::Dark));
+mod cjk_font_tests {
+    /// Renders `sample` in every UI family and asserts each character drew a real glyph rather
+    /// than the replacement box.
+    fn assert_family_coverage(ctx: &egui::Context, sample: &str) {
         let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
         // No renderer here: drop the frame's texture uploads (egui asserts on unhandled ones in debug).
         out.textures_delta.clear();
@@ -381,11 +391,11 @@ mod japanese_font_tests {
             ] {
                 let font = egui::FontId::new(13.0, family);
                 // epaint 0.36's has_glyph compares face keys, so it reports a false
-                // negative when a real Japanese glyph shares the replacement face.
+                // negative when a real CJK glyph shares the replacement face.
                 // Check the rendered atlas glyph instead of that face-level predicate.
                 let missing = fonts.layout_no_wrap("\u{10ffff}".into(), font.clone(), egui::Color32::WHITE);
                 let missing_uv = missing.rows[0].glyphs[0].uv_rect;
-                for ch in "日本語コンポジションレイヤーエフェクト設定".chars() {
+                for ch in sample.chars() {
                     let rendered = fonts.layout_no_wrap(ch.to_string(), font.clone(), egui::Color32::WHITE);
                     let uv = rendered.rows[0].glyphs[0].uv_rect;
                     assert!(uv.size.x > 0.0 && uv.size.y > 0.0, "empty {ch} in {font:?}");
@@ -393,5 +403,33 @@ mod japanese_font_tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn installed_japanese_fallback_is_available_in_all_ui_families() {
+        use effectcraft_text::fonts;
+        let base = fonts::resolve("Inter", "Regular").face;
+        if !fonts::face(fonts::fallback_for('あ', base)).has_char('あ') {
+            eprintln!("no Japanese system font installed; skipping glyph coverage");
+            return;
+        }
+        let ctx = egui::Context::default();
+        super::install_for_language(&ctx, &super::Tokens::for_kind(super::ThemeKind::Dark), "ja");
+        assert_family_coverage(&ctx, "日本語コンポジションレイヤーエフェクト設定");
+    }
+
+    /// `汉`, `简` and `视` are Simplified-only: a Japanese face cannot stand in for them, so a
+    /// Chinese UI needs its own probe and its own face.
+    #[test]
+    fn installed_chinese_fallback_covers_the_simplified_only_glyphs() {
+        use effectcraft_text::fonts;
+        let base = fonts::resolve("Inter", "Regular").face;
+        if !fonts::face(fonts::fallback_for('汉', base)).has_char('汉') {
+            eprintln!("no Chinese system font installed; skipping glyph coverage");
+            return;
+        }
+        let ctx = egui::Context::default();
+        super::install_for_language(&ctx, &super::Tokens::for_kind(super::ThemeKind::Dark), "zh-cn");
+        assert_family_coverage(&ctx, "汉字简体视图图层效果设置");
     }
 }

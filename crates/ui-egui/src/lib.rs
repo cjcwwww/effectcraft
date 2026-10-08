@@ -194,6 +194,9 @@ pub struct EffectcraftApp {
     last_time: f64,
     styled: bool,
     fonts_ready: bool,
+    /// The language the CJK fallback face was installed for. A Japanese face can lack the
+    /// Simplified-only glyphs (`汉`, `简`, `视`) a Chinese UI needs, so a change re-installs.
+    fonts_language: String,
     pub(crate) control_rx: Option<Receiver<ControlRequest>>,
     pub(crate) deferred: Vec<(ControlRequest, f64)>,
     pub(crate) synthetic: Vec<egui::Event>,
@@ -280,6 +283,7 @@ impl EffectcraftApp {
             last_time: 0.0,
             styled: false,
             fonts_ready: false,
+            fonts_language: String::new(),
             control_rx: None,
             deferred: vec![],
             synthetic: vec![],
@@ -1547,9 +1551,19 @@ impl eframe::App for EffectcraftApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_gpu_failure(ctx);
         if !self.styled {
-            theme::install(ctx, &self.tokens);
+            let language = i18n::language(self);
+            theme::install_for_language(ctx, &self.tokens, language);
             fit_window(ctx);
             self.styled = true;
+            self.fonts_language = language.to_string();
+            ctx.request_repaint();
+        } else if self.fonts_language != i18n::language(self) {
+            // The CJK fallback face follows the UI language, so switching to Chinese replaces the
+            // Japanese face that would leave `汉`, `简` and `视` as missing glyphs.
+            let language = i18n::language(self);
+            theme::install_for_language(ctx, &self.tokens, language);
+            self.fonts_language = language.to_string();
+            self.fonts_ready = true;
             ctx.request_repaint();
         } else {
             self.fonts_ready = true;

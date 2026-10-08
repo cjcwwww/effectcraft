@@ -1,21 +1,26 @@
-//! Japanese menu labels for EffectCraft's own engine tree. Commands remain locale-independent.
-//! A command plus its source label distinguishes parameterised entries (e.g. blend modes).
-//! Empty command keys identify submenus. Dynamic filenames, user names and effect plug-in names
-//! remain verbatim; this catalog only translates the fixed menu tree.
+//! Menu labels for EffectCraft's own engine tree in each translated language. Commands remain
+//! locale-independent. A command plus its source label distinguishes parameterised entries (e.g.
+//! blend modes). Empty command keys identify submenus. Dynamic filenames, user names and effect
+//! plug-in names remain verbatim; these catalogs only translate the fixed menu tree.
 
 use crate::EffectcraftApp;
 use effectcraft_engine::menus::MenuEntry;
 
-pub(crate) fn japanese(app: &EffectcraftApp) -> bool {
+/// The active UI language: the stored preference with `system` resolved to the operating system's
+/// language, or `en` when EffectCraft has no catalog for it. English is the source of every label,
+/// so it needs no lookup.
+pub(crate) fn language(app: &EffectcraftApp) -> &'static str {
     match app.session.prefs.general.language.as_str() {
-        "system" => system_language() == "ja",
-        l => l == "ja",
+        "system" => system_language(),
+        "ja" => "ja",
+        "zh-cn" => "zh-cn",
+        _ => "en",
     }
 }
 
 /// Settings ▸ General ▸ Language ▸ Match System: the operating system's interface language
 /// where EffectCraft has it, else English (#229), as After Effects installs in the system's
-/// language. The browser build stays in English: it has no Japanese font of its own.
+/// language. The browser build stays in English: it has no CJK font of its own.
 fn system_language() -> &'static str {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -26,25 +31,45 @@ fn system_language() -> &'static str {
     "en"
 }
 
-/// The language EffectCraft shows for a BCP 47 locale (`ja-JP` → `ja`).
+/// The language EffectCraft shows for a BCP 47 locale (`ja-JP` → `ja`, `zh-CN` → `zh-cn`).
+/// Traditional Chinese has no catalog yet, so `zh-TW` / `zh-Hant` keep English.
 fn supported(locale: Option<&str>) -> &'static str {
-    match locale.and_then(|l| l.split(['-', '_']).next()) {
-        Some(l) if l.eq_ignore_ascii_case("ja") => "ja",
+    let Some(locale) = locale else { return "en" };
+    let tag = locale.to_ascii_lowercase();
+    match tag.split(['-', '_']).next().unwrap_or("") {
+        "ja" => "ja",
+        "zh" => {
+            if ["hant", "tw", "hk", "mo"].iter().any(|r| tag.contains(r)) { "en" } else { "zh-cn" }
+        }
         _ => "en",
     }
 }
 
+/// `source` looked up in `catalog` by (command, English label); the source itself when the pair is
+/// absent, so computed labels and user names stay verbatim.
+fn lookup<'a>(catalog: &[(&str, &str, &'a str)], command: &str, source: &'a str) -> &'a str {
+    catalog.iter().find(|(id, en, _)| *id == command && *en == source).map(|(_, _, tr)| *tr).unwrap_or(source)
+}
+
 pub(crate) fn label<'a>(app: &EffectcraftApp, command: &str, source: &'a str) -> &'a str {
-    if japanese(app) { JAPANESE.iter().find(|(id, en, _)| *id == command && *en == source).map(|(_, _, ja)| *ja).unwrap_or(source) } else { source }
+    match language(app) {
+        "ja" => lookup(JAPANESE, command, source),
+        "zh-cn" => lookup(SIMPLIFIED_CHINESE, command, source),
+        _ => source,
+    }
 }
 
 pub(crate) fn entry(app: &EffectcraftApp, e: &MenuEntry, shown: String) -> String {
-    if !japanese(app) {
-        return shown;
-    }
+    // Undo/redo names come from the history, so they are formatted per language here rather than
+    // looked up in a catalog.
+    let (undo, no_undo, redo, no_redo) = match language(app) {
+        "ja" => ("取り消し", "取り消しできません", "やり直し", "やり直しできません"),
+        "zh-cn" => ("撤销", "无法撤销", "重做", "无法重做"),
+        _ => return shown,
+    };
     match e.command.as_str() {
-        "edit.undo" => app.session.history.undo.last().map(|u| format!("取り消し {}", u.0)).unwrap_or_else(|| "取り消しできません".into()),
-        "edit.redo" => app.session.history.redo.last().map(|u| format!("やり直し {}", u.0)).unwrap_or_else(|| "やり直しできません".into()),
+        "edit.undo" => app.session.history.undo.last().map(|u| format!("{undo} {}", u.0)).unwrap_or_else(|| no_undo.into()),
+        "edit.redo" => app.session.history.redo.last().map(|u| format!("{redo} {}", u.0)).unwrap_or_else(|| no_redo.into()),
         "window.panel" => {
             let prefix = format!("{}: ", e.label);
             if let Some(name) = shown.strip_prefix(&prefix) {
@@ -61,16 +86,32 @@ pub(crate) fn entry(app: &EffectcraftApp, e: &MenuEntry, shown: String) -> Strin
 }
 
 pub(crate) fn submenu(app: &EffectcraftApp, source: &str, shown: String) -> String {
-    if japanese(app) {
-        if source == "Assign Shortcut to Workspace" {
-            if let Some(name) = shown.strip_prefix("Assign Shortcut to “").and_then(|s| s.strip_suffix("” Workspace")) {
-                return format!("ワークスペース「{name}」にショートカットを割り当て");
+    // The patterns stay English: `shown` is the engine's computed source label, which is always
+    // built from the English tree.
+    match language(app) {
+        "ja" => {
+            if source == "Assign Shortcut to Workspace" {
+                if let Some(name) = shown.strip_prefix("Assign Shortcut to “").and_then(|s| s.strip_suffix("” Workspace")) {
+                    return format!("ワークスペース「{name}」にショートカットを割り当て");
+                }
+            } else if source == "Assign Shortcut to 3D View"
+                && let Some(name) = shown.strip_prefix("Assign Shortcut to “").and_then(|s| s.strip_suffix('”'))
+            {
+                return format!("「{name}」にショートカットを割り当て");
             }
-        } else if source == "Assign Shortcut to 3D View"
-            && let Some(name) = shown.strip_prefix("Assign Shortcut to “").and_then(|s| s.strip_suffix('”'))
-        {
-            return format!("「{name}」にショートカットを割り当て");
         }
+        "zh-cn" => {
+            if source == "Assign Shortcut to Workspace" {
+                if let Some(name) = shown.strip_prefix("Assign Shortcut to “").and_then(|s| s.strip_suffix("” Workspace")) {
+                    return format!("为工作区“{name}”分配快捷键");
+                }
+            } else if source == "Assign Shortcut to 3D View"
+                && let Some(name) = shown.strip_prefix("Assign Shortcut to “").and_then(|s| s.strip_suffix('”'))
+            {
+                return format!("为“{name}”分配快捷键");
+            }
+        }
+        _ => {}
     }
     label(app, "", &shown).into()
 }
@@ -696,6 +737,628 @@ const JAPANESE: &[(&str, &str, &str)] = &[
     ("file.openDemoProject", "Open Demo Project", "デモプロジェクトを開く"),
 ];
 
+/// Simplified Chinese (`zh-cn`) menu labels, keyed the same way as `JAPANESE`.
+const SIMPLIFIED_CHINESE: &[(&str, &str, &str)] = &[
+    ("", "EffectCraft", "EffectCraft"),
+    ("app.about", "About EffectCraft...", "关于 EffectCraft..."),
+    ("", "Settings...", "设置..."),
+    ("app.settings", "General...", "常规..."),
+    ("app.settings", "Startup & Repair...", "启动并修复..."),
+    ("app.settings", "Project...", "项目..."),
+    ("app.settings", "Composition...", "合成..."),
+    ("app.settings", "Previews...", "预览..."),
+    ("app.settings", "Appearance...", "外观..."),
+    ("app.settings", "Grids & Guides...", "网格和参考线..."),
+    ("app.settings", "Labels...", "标签..."),
+    ("app.settings", "Type...", "类型..."),
+    ("app.settings", "Import...", "导入..."),
+    ("app.settings", "Export...", "导出..."),
+    ("app.settings", "Audio...", "音频..."),
+    ("app.settings", "Disk...", "磁盘..."),
+    ("app.settings", "Memory & CPU...", "内存和CPU..."),
+    ("app.settings", "Video...", "视频预览..."),
+    ("app.settings", "3D...", "3D..."),
+    ("app.settings", "Scripting & Expressions...", "脚本和表达式..."),
+    ("app.hide", "Hide EffectCraft", "隐藏 EffectCraft"),
+    ("app.hideOthers", "Hide Others", "隐藏其他"),
+    ("app.showAll", "Show All", "显示所有"),
+    ("app.quit", "Quit EffectCraft", "退出 EffectCraft"),
+    ("", "File", "文件"),
+    ("", "New", "新建"),
+    ("file.newProject", "New Project", "新建项目"),
+    ("file.newFromTemplate", "New Project from Template...", "从模板新建项目..."),
+    ("project.newFolder", "New Folder", "新建文件夹"),
+    ("file.open", "Open Project...", "打开项目..."),
+    ("", "Open Recent", "打开最近的文件"),
+    ("file.clearRecent", "Clear Recent Projects", "清除最近使用的项目"),
+    ("file.close", "Close", "关闭"),
+    ("file.closeProject", "Close Project", "关闭项目"),
+    ("file.save", "Save", "保存"),
+    ("", "Save As", "另存为"),
+    ("file.saveAs", "Save As...", "另存为..."),
+    ("file.saveCopy", "Save a Copy...", "保存副本..."),
+    ("file.saveCopyAsXml", "Save a Copy As XML...", "将副本另存为XML..."),
+    ("templates.saveAs", "Save as Template...", "另存为模板..."),
+    ("file.incrementAndSave", "Increment and Save", "增量保存"),
+    ("file.revert", "Revert", "恢复"),
+    ("", "Import", "导入"),
+    ("file.import", "File...", "文件..."),
+    ("file.importMultiple", "Multiple Files...", "多个文件..."),
+    ("file.importTimeline", "Adobe Premiere Pro Project...", "Adobe Premiere Pro 项目..."),
+    ("file.importPlaceholder", "Placeholder...", "占位符..."),
+    ("file.importSolid", "Solid...", "纯色..."),
+    ("file.importLottie", "Lottie...", "Lottie..."),
+    ("file.importVanishingPoint", "Vanishing Point (.vpe)...", "Vanishing Point (.vpe)..."),
+    ("essential.importTemplate", "Essential Graphics Template...", "动态图形模板..."),
+    ("", "Import Recent Footage", "导入最近的素材"),
+    ("file.clearRecentFootage", "Clear Recent Footage", "清除最近使用的素材"),
+    ("", "Export", "导出"),
+    ("renderQueue.add", "Add to Render Queue", "添加到渲染队列"),
+    ("file.exportTimeline", "Adobe Premiere Pro Project...", "导出 Adobe Premiere Pro 项目..."),
+    ("file.exportLottie", "Lottie JSON...", "Lottie JSON..."),
+    ("essential.exportTemplate", "Essential Graphics Template...", "动态图形模板..."),
+    ("app.find", "Find", "寻找"),
+    ("layer.addItem", "Add Footage to Comp", "将素材添加到合成"),
+    ("file.newCompFromSelection", "New Comp from Selection...", "基于所选项新建合成..."),
+    ("", "Dependencies", "整理工程"),
+    ("file.collectFiles", "Collect Files...", "收集文件..."),
+    ("file.consolidateFootage", "Consolidate All Footage", "整合所有素材"),
+    ("file.removeUnusedFootage", "Remove Unused Footage", "删除未用过的素材"),
+    ("file.reduceProject", "Reduce Project", "减少项目"),
+    ("file.findMissing", "Find Missing Effects", "查找缺失的效果"),
+    ("file.findMissing", "Find Missing Fonts", "查找缺失的字体"),
+    ("file.findMissing", "Find Missing Footage", "查找缺失的素材"),
+    ("file.watchFolder", "Watch Folder...", "监视文件夹..."),
+    ("", "Scripts", "脚本"),
+    ("file.installScript", "Install Script File...", "安装脚本文件..."),
+    ("file.installScriptUIPanel", "Install ScriptUI Panel...", "安装ScriptUI面板..."),
+    ("file.runScript", "Run Script File...", "运行脚本文件..."),
+    ("", "Create Proxy", "创建代理"),
+    ("file.createProxy", "Still...", "静止图像..."),
+    ("file.createProxy", "Movie...", "影片..."),
+    ("", "Set Proxy", "设置代理"),
+    ("file.setProxy", "File...", "文件..."),
+    ("file.setProxyNone", "None", "无"),
+    ("", "Interpret Footage", "解释素材"),
+    ("file.interpretFootage", "Main...", "主要..."),
+    ("file.interpretProxy", "Proxy...", "代理..."),
+    ("file.rememberInterpretation", "Remember Interpretation", "记住解释"),
+    ("file.applyInterpretation", "Apply Interpretation", "应用解释"),
+    ("", "Replace Footage", "替换素材"),
+    ("file.replaceFootage", "File...", "文件..."),
+    ("file.replaceWithPlaceholder", "Placeholder...", "占位符..."),
+    ("file.replaceWithSolid", "Solid...", "纯色..."),
+    ("file.replaceWithLayeredComp", "With Layered Comp", "带分层合成"),
+    ("file.reloadFootage", "Reload Footage", "重新加载素材"),
+    ("file.revealInFinder", "Reveal in Finder", "在资源管理器中显示"),
+    ("file.projectSettings", "Project Settings...", "项目设置..."),
+    ("app.quit", "Exit", "退出"),
+    ("", "Edit", "编辑"),
+    ("edit.undo", "Undo", "撤销"),
+    ("edit.redo", "Redo", "重做"),
+    ("", "History", "历史记录"),
+    ("app.commandPalette", "Quick Apply...", "快速应用..."),
+    ("edit.cut", "Cut", "剪切"),
+    ("edit.copy", "Copy", "复制"),
+    ("edit.copyWithPropertyLinks", "Copy with Property Links", "带属性链接复制"),
+    ("edit.copyWithRelativePropertyLinks", "Copy with Relative Property Links", "带相对属性链接复制"),
+    ("edit.copyExpressionOnly", "Copy Expression Only", "仅复制表达式"),
+    ("edit.paste", "Paste", "粘贴"),
+    ("edit.pasteReversedKeyframes", "Paste Reversed Keyframes", "粘贴反向关键帧"),
+    ("edit.pasteTextMatchFormatting", "Paste Text and Match Formatting", "粘贴文本并匹配格式"),
+    ("edit.pasteTextFormattingOnly", "Paste Text Formatting Only", "仅粘贴文本格式"),
+    ("edit.clear", "Clear", "清除"),
+    ("edit.duplicate", "Duplicate", "重复"),
+    ("edit.splitLayer", "Split Layer", "拆分图层"),
+    ("edit.liftWorkArea", "Lift Work Area", "提升工作区域"),
+    ("edit.extractWorkArea", "Extract Work Area", "提取工作区域"),
+    ("edit.selectAll", "Select All", "全选"),
+    ("edit.deselectAll", "Deselect All", "全部取消选择"),
+    ("", "Label", "标签"),
+    ("edit.selectLabelGroup", "Select Label Group", "选择标签组"),
+    ("edit.label", "None", "无"),
+    ("edit.label", "Red", "红色"),
+    ("edit.label", "Yellow", "黄色"),
+    ("edit.label", "Aqua", "浅绿色"),
+    ("edit.label", "Pink", "粉色"),
+    ("edit.label", "Lavender", "淡紫色"),
+    ("edit.label", "Peach", "桃红色"),
+    ("edit.label", "Sea Foam", "海泡色"),
+    ("edit.label", "Blue", "蓝色"),
+    ("edit.label", "Green", "绿色"),
+    ("edit.label", "Purple", "紫色"),
+    ("edit.label", "Orange", "橙色"),
+    ("edit.label", "Brown", "棕色"),
+    ("edit.label", "Fuchsia", "紫红色"),
+    ("edit.label", "Cyan", "青色"),
+    ("edit.label", "Sandstone", "砂岩色"),
+    ("edit.label", "Dark Green", "深绿色"),
+    ("app.settings", "Edit Label Colors...", "编辑标签颜色..."),
+    ("", "Select Keyframe Label Group", "选择关键帧标签组"),
+    ("keys.selectLabelGroup", "On Selected Layers", "在选定的图层上"),
+    ("keys.selectLabelGroup", "On All Layers", "在所有图层上"),
+    ("keys.selectLabelGroup", "Visible Keyframes on Selected Layers", "选定图层上的可见关键帧"),
+    ("keys.selectLabelGroup", "Visible Keyframes on All Layers", "所有图层上的可见关键帧"),
+    ("", "Purge", "清理"),
+    ("edit.purge", "All Cache...", "所有缓存..."),
+    ("edit.purge", "All Memory & Disk Cache...", "所有内存和磁盘缓存..."),
+    ("edit.purge", "All Memory", "所有内存"),
+    ("edit.purge", "All Disk Cache...", "所有磁盘缓存..."),
+    ("edit.purge", "All 3D Cache...", "所有3D缓存..."),
+    ("edit.purgeUndo", "Undo", "撤销"),
+    ("edit.purge", "Image Cache Memory", "图像缓存内存"),
+    ("edit.purge", "Snapshot", "快照"),
+    ("edit.editOriginal", "Edit Original...", "编辑原稿..."),
+    ("", "Templates", "模板"),
+    ("app.templates", "Render Settings...", "渲染设置..."),
+    ("app.templates", "Output Module...", "输出模块..."),
+    ("app.keyboardShortcuts", "Keyboard Shortcuts", "键盘快捷键"),
+    ("", "Preferences", "首选项"),
+    ("", "Composition", "合成"),
+    ("comp.new", "New Composition...", "新建合成..."),
+    ("comp.settings", "Composition Settings...", "合成设置..."),
+    ("comp.setPosterTime", "Set Poster Time", "设置海报时间"),
+    ("comp.trimToWorkArea", "Trim Comp to Work Area", "将合成裁剪到工作区域"),
+    ("comp.cropToRegionOfInterest", "Crop Comp to Region of Interest", "将合成裁剪到工作区"),
+    ("comp.cropToLayerBounds", "Crop Comp to Selected Layer(s) Bounds", "裁剪合成到目标区域"),
+    ("render.addOutputModule", "Add Output Module", "添加输出模块"),
+    ("", "Preview", "预览"),
+    ("playback.toggle", "Play Current Preview", "播放当前预览"),
+    ("playback.cacheWhenIdle", "Cache Frames When Idle", "空闲时缓存帧"),
+    ("playback.audio", "Audio", "音频"),
+    ("", "Save Frame As", "帧另存为"),
+    ("comp.saveFrameAs", "File...", "文件..."),
+    ("comp.saveFrameAsPsd", "Photoshop Layers...", "Photoshop 图层..."),
+    ("comp.saveFrameAsExr", "ProEXR...", "ProEXR..."),
+    ("render.preRender", "Pre-render...", "帧预览..."),
+    ("render.saveCurrentPreview", "Save Current Preview...", "保存当前预览..."),
+    ("comp.openInEssentialGraphics", "Open in Essential Graphics", "在基本图形中打开"),
+    ("", "Responsive Design — Time", "响应式设计 — 时间"),
+    ("comp.responsiveTime", "Create Intro", "创建开场"),
+    ("comp.responsiveTime", "Create Outro", "创建结尾"),
+    ("comp.responsiveTime", "Create Protected Region from Work Area", "通过工作区域创建受保护区域"),
+    ("comp.flowchart", "Composition Flowchart", "合成流程图"),
+    ("comp.miniFlowchart", "Composition Mini-Flowchart", "合成微型流程图"),
+    ("", "VR", "VR"),
+    ("comp.vr.createEnvironment", "Create VR Environment...", "创建VR环境..."),
+    ("comp.vr.extractCubemap", "Extract Cubemap...", "提取立方图..."),
+    ("", "Layer", "图层"),
+    ("layer.newText", "Text", "文本"),
+    ("layer.newSolid", "Solid...", "纯色..."),
+    ("layer.newLight", "Light...", "灯光..."),
+    ("layer.newCamera", "Camera...", "摄像机..."),
+    ("layer.newNull", "Null Object", "空对象"),
+    ("layer.newShape", "Shape Layer", "形状图层"),
+    ("layer.newAdjustment", "Adjustment Layer", "调整图层"),
+    ("layer.newContentAwareFill", "Content-Aware Fill Layer...", "内容识别填充图层..."),
+    ("layer.new3dPrimitive", "Cube", "立方体"),
+    ("layer.new3dPrimitive", "Sphere", "球体"),
+    ("layer.new3dPrimitive", "Plane", "平面"),
+    ("layer.new3dPrimitive", "Torus", "环面"),
+    ("layer.new3dPrimitive", "Cone", "锥形"),
+    ("layer.new3dPrimitive", "Cylinder", "圆柱体"),
+    ("layer.settings", "Layer Settings...", "图层设置..."),
+    ("layer.openLayer", "Open Layer", "打开图层"),
+    ("layer.openSource", "Open Layer Source", "打开图层源"),
+    ("layer.revealInFinder", "Reveal in Finder", "在Finder中显示"),
+    ("", "Mask", "蒙版"),
+    ("layer.addMask", "New Mask", "新建蒙版"),
+    ("layer.mask.shape", "Mask Shape...", "蒙版形状..."),
+    ("layer.mask.set", "Mask Feather...", "蒙版羽化..."),
+    ("layer.mask.set", "Mask Opacity...", "蒙版不透明度..."),
+    ("layer.mask.set", "Mask Expansion...", "蒙版扩展..."),
+    ("layer.mask.reset", "Reset Mask", "重置蒙版"),
+    ("layer.mask.remove", "Remove Mask", "移除蒙版"),
+    ("layer.mask.removeAll", "Remove All Masks", "移除所有蒙版"),
+    ("track.mask", "Track Mask", "跟踪蒙版"),
+    ("", "Mode", "魔术"),
+    ("layer.mask.mode", "None", "无"),
+    ("layer.mask.mode", "Add", "相加"),
+    ("layer.mask.mode", "Subtract", "相减"),
+    ("layer.mask.mode", "Intersect", "交集"),
+    ("layer.mask.mode", "Lighten", "变亮"),
+    ("layer.mask.mode", "Darken", "变暗"),
+    ("layer.mask.mode", "Difference", "差值"),
+    ("layer.mask.invert", "Inverted", "反转"),
+    ("layer.mask.lock", "Locked", "已锁定"),
+    ("", "Motion Blur", "运动模糊"),
+    ("layer.mask.motionBlur", "Same As Layer", "与图层相同"),
+    ("layer.mask.motionBlur", "On", "开"),
+    ("layer.mask.motionBlur", "Off", "关"),
+    ("", "Feather Falloff", "羽化衰减"),
+    ("layer.mask.featherFalloff", "Smooth", "平滑"),
+    ("layer.mask.featherFalloff", "Linear", "线性"),
+    ("layer.mask.unlockAll", "Unlock All Masks", "解除所有蒙版"),
+    ("layer.mask.lockOthers", "Lock Other Masks", "锁定其他蒙版"),
+    ("layer.mask.hideLocked", "Hide Locked Masks", "隐藏锁定的蒙版"),
+    ("", "Mask and Shape Path", "蒙版和形状路径"),
+    ("path.rotoBezier", "RotoBezier", "RotoBezier"),
+    ("mask.setClosed", "Closed", "已关闭"),
+    ("path.convertToBezier", "Convert To Bezier Path", "转换为贝塞尔曲线路径"),
+    ("path.setFirstVertex", "Set First Vertex", "设置第一个顶点"),
+    ("path.freeTransform", "Free Transform Points", "自由变换点"),
+    ("", "Quality", "品质"),
+    ("layer.quality", "Best", "最佳"),
+    ("layer.quality", "Draft", "草图"),
+    ("layer.quality", "Wireframe", "线框"),
+    ("layer.sampling", "Bilinear", "双线性"),
+    ("layer.sampling", "Bicubic", "双立方"),
+    ("", "Switches", "开关"),
+    ("layer.hideOtherVideo", "Hide Other Video", "隐藏其他视频"),
+    ("layer.showAllVideo", "Show All Video", "显示所有视频"),
+    ("layer.unlockAll", "Unlock All Layers", "解锁所有图层"),
+    ("layer.expressions", "Enable Expressions", "启用表达式"),
+    ("layer.expressions", "Disable Expressions", "禁用表达式"),
+    ("layer.setSwitch", "Shy", "消隐"),
+    ("layer.setSwitch", "Lock", "锁定"),
+    ("layer.setSwitch", "Audio", "音频"),
+    ("layer.setSwitch", "Video", "视频"),
+    ("layer.setSwitch", "Solo", "单独"),
+    ("layer.setSwitch", "Effect", "效果"),
+    ("layer.setSwitch", "Collapse", "折叠"),
+    ("layer.setSwitch", "Motion Blur", "运动模糊"),
+    ("layer.setSwitch", "Adjustment Layer", "调整图层"),
+    ("", "Transform", "变换"),
+    ("layer.transform", "Reset", "重置"),
+    ("layer.setTransform", "Anchor Point...", "锚点..."),
+    ("layer.setTransform", "Position...", "位置..."),
+    ("layer.setTransform", "Scale...", "缩放..."),
+    ("layer.setTransform", "Orientation...", "方向..."),
+    ("layer.setTransform", "Rotation...", "旋转..."),
+    ("layer.setTransform", "Opacity...", "不透明度..."),
+    ("layer.transform", "Flip Horizontal", "水平翻转"),
+    ("layer.transform", "Flip Vertical", "垂直翻转"),
+    ("layer.transform", "Center In View", "视点居中"),
+    ("layer.centerAnchor", "Center Anchor Point in Layer Content", "在图层内容中居中放置锚点"),
+    ("layer.transform", "Fit to Comp", "适合复合"),
+    ("layer.transform", "Fit to Comp Width", "适合复合宽度"),
+    ("layer.transform", "Fit to Comp Height", "适合复合高度"),
+    ("layer.autoOrient", "Auto-Orient...", "自动定向..."),
+    ("", "Time", "时间"),
+    ("layer.enableTimeRemap", "Enable Time Remapping", "启用时间重映射"),
+    ("layer.timeReverse", "Time-Reverse Layer", "时间反向图层"),
+    ("layer.timeStretch", "Time Stretch...", "时间伸缩..."),
+    ("layer.freezeFrame", "Freeze Frame", "冻结帧"),
+    ("layer.freezeOnLastFrame", "Freeze On Last Frame", "在最后一帧上冻结"),
+    ("layer.alignVideoToData", "Align Video to Data", "将视频对齐到数据"),
+    ("", "Frame Blending", "帧混合"),
+    ("layer.frameBlending", "Off", "关"),
+    ("layer.frameBlending", "Frame Mix", "帧混合"),
+    ("layer.frameBlending", "Pixel Motion", "像素运动"),
+    ("layer.setSwitch", "3D Layer", "3D图层"),
+    ("layer.setSwitch", "Guide Layer", "参考线图层"),
+    ("layer.environment", "Environment Layer", "环境图层"),
+    ("", "Markers", "标记"),
+    ("layer.addMarker", "Add Marker", "添加标记"),
+    ("layer.updateMarkersFromSource", "Update Markers From Source", "从源更新标记"),
+    ("layer.markersLock", "Lock Markers", "锁定标记"),
+    ("layer.deleteAllMarkers", "Delete All Markers", "删除所有标记"),
+    ("layer.setSwitch", "Preserve Transparency", "保持透明度"),
+    ("", "Blending Mode", "混合模式"),
+    ("layer.setBlendMode", "Normal", "正常"),
+    ("layer.setBlendMode", "Dissolve", "溶解"),
+    ("layer.setBlendMode", "Dancing Dissolve", "动态抖动溶解"),
+    ("layer.setBlendMode", "Darken", "变暗"),
+    ("layer.setBlendMode", "Multiply", "相乘"),
+    ("layer.setBlendMode", "Color Burn", "颜色加深"),
+    ("layer.setBlendMode", "Classic Color Burn", "经典颜色加深"),
+    ("layer.setBlendMode", "Linear Burn", "线性加深"),
+    ("layer.setBlendMode", "Darker Color", "较深的颜色"),
+    ("layer.setBlendMode", "Add", "相加"),
+    ("layer.setBlendMode", "Lighten", "变亮"),
+    ("layer.setBlendMode", "Screen", "屏幕"),
+    ("layer.setBlendMode", "Color Dodge", "颜色减淡"),
+    ("layer.setBlendMode", "Classic Color Dodge", "经典颜色减淡"),
+    ("layer.setBlendMode", "Linear Dodge", "线性减淡"),
+    ("layer.setBlendMode", "Lighter Color", "较浅的颜色"),
+    ("layer.setBlendMode", "Overlay", "叠加"),
+    ("layer.setBlendMode", "Soft Light", "柔光"),
+    ("layer.setBlendMode", "Hard Light", "强光"),
+    ("layer.setBlendMode", "Linear Light", "线性光"),
+    ("layer.setBlendMode", "Vivid Light", "亮光"),
+    ("layer.setBlendMode", "Pin Light", "点光"),
+    ("layer.setBlendMode", "Hard Mix", "纯色混合"),
+    ("layer.setBlendMode", "Difference", "差值"),
+    ("layer.setBlendMode", "Classic Difference", "经典差值"),
+    ("layer.setBlendMode", "Exclusion", "排除"),
+    ("layer.setBlendMode", "Subtract", "相减"),
+    ("layer.setBlendMode", "Divide", "相除"),
+    ("layer.setBlendMode", "Hue", "色相"),
+    ("layer.setBlendMode", "Saturation", "饱和度"),
+    ("layer.setBlendMode", "Color", "颜色"),
+    ("layer.setBlendMode", "Luminosity", "发光度"),
+    ("layer.setBlendMode", "Stencil Alpha", "模板 Alpha"),
+    ("layer.setBlendMode", "Stencil Luma", "模板亮度"),
+    ("layer.setBlendMode", "Silhouette Alpha", "轮廓 Alpha"),
+    ("layer.setBlendMode", "Silhouette Luma", "轮廓亮度"),
+    ("layer.setBlendMode", "Alpha Add", "Alpha 添加"),
+    ("layer.setBlendMode", "Luminescent Premul", "冷光预乘"),
+    ("layer.setBlendMode", "Next Blending Mode", "下一混合模式"),
+    ("layer.setBlendMode", "Previous Blending Mode", "上一混合模式"),
+    ("", "Track Matte", "跟踪遮罩"),
+    ("layer.trackMatte", "No Track Matte", "没有轨道遮罩"),
+    ("layer.trackMatte", "Alpha Matte", "Alpha 遮罩"),
+    ("layer.trackMatte", "Alpha Inverted Matte", "Alpha 反转遮罩"),
+    ("layer.trackMatte", "Luma Matte", "亮度遮罩"),
+    ("layer.trackMatte", "Luma Inverted Matte", "亮度反转遮罩"),
+    ("layer.trackMatte", "Matte with Layer Above", "使用上方图层遮罩"),
+    ("layer.trackMatte", "Matte with Layer Below", "使用下方图层遮罩"),
+    ("", "Layer Styles", "图层样式"),
+    ("layer.style.options", "Layer Style Options...", "图层样式选项..."),
+    ("layer.style.convertToEditable", "Convert to Editable Styles", "转换为可编辑样式"),
+    ("layer.style.showAll", "Show All", "全部显示"),
+    ("layer.style.removeAll", "Remove All", "全部移除"),
+    ("layer.style.dropShadow", "Drop Shadow", "投影"),
+    ("layer.style.innerShadow", "Inner Shadow", "内阴影"),
+    ("layer.style.outerGlow", "Outer Glow", "外发光"),
+    ("layer.style.innerGlow", "Inner Glow", "内发光"),
+    ("layer.style.bevelEmboss", "Bevel and Emboss", "斜面和浮雕"),
+    ("layer.style.satin", "Satin", "光泽"),
+    ("layer.style.colorOverlay", "Color Overlay", "颜色叠加"),
+    ("layer.style.gradientOverlay", "Gradient Overlay", "渐变叠加"),
+    ("layer.style.stroke", "Stroke", "描边"),
+    ("path.groupShapes", "Group Shapes", "组合形状"),
+    ("path.ungroupShapes", "Ungroup Shapes", "取消组合形状"),
+    ("", "Arrange", "排列"),
+    ("layer.arrange", "Bring Layer to Front", "将图层置于顶层"),
+    ("layer.arrange", "Bring Layer Forward", "使图层前移一层"),
+    ("layer.arrange", "Send Layer Backward", "使图层后移一层"),
+    ("layer.arrange", "Send Layer to Back", "将图层置于底层"),
+    ("", "Reveal", "显示"),
+    ("layer.revealSource", "Reveal Layer Source in Project", "在项目中显示图层源"),
+    ("comp.flowchart", "Reveal Layer in Project Flowchart", "在项目流程图中显示图层"),
+    ("comp.revealInProject", "Reveal Composition in Project", "在项目中显示合成"),
+    ("layer.revealExpressionErrors", "Reveal Expression Errors", "显示表达式错误"),
+    ("", "Create", "创建"),
+    ("layer.create", "Convert to Editable Text", "转换为可编辑文字"),
+    ("layer.create", "Create Shapes from Text", "从文本创建形状"),
+    ("layer.create", "Create Masks from Text", "从文本创建蒙版"),
+    ("layer.create", "Create Shapes from Vector Layer", "从矢量图层创建形状"),
+    ("layer.create", "Create Keyframes from Data", "从数据创建关键帧"),
+    ("layer.create", "Null Controllers for Positional Points", "位置点的空控制器"),
+    ("layer.create", "Null Controllers for Path Points", "路径点的空控制器"),
+    ("layer.create", "Nulls Following Path Points", "空值跟随路径点"),
+    ("layer.create", "Null Tracing Along Path", "沿路径1进行空值追踪"),
+    ("layer.create", "Create 3D Layer Instance", "创建3D图层实例"),
+    ("", "Camera", "摄像机"),
+    ("camera.fromView", "Create Camera from 3D View", "基于3D视图创建摄像机"),
+    ("camera.stereoRig", "Create Stereo 3D Rig", "创建立体3D装置"),
+    ("camera.orbitNull", "Create Orbit Null", "创建空轨道"),
+    ("camera.fromModel", "Create Cameras from 3D Model", "基于3D模型生成摄像机"),
+    ("camera.linkFocusToPoi", "Link Focus Distance to Point of Interest", "从焦距链接到目标点"),
+    ("camera.linkFocusToLayer", "Link Focus Distance to Layer", "从焦距链接到图层"),
+    ("camera.setFocusToLayer", "Set Focus Distance to Layer", "从焦距设置为图层"),
+    ("layer.cameraSettings", "Camera Settings...", "摄像机设置..."),
+    ("view.reset3DView", "Reset 3D View", "重设摄像机"),
+    ("", "Light", "灯光"),
+    ("light.fromModel", "Create Lights from 3D Model", "从3D模型创建光线"),
+    ("light.controlWithCamera", "Control Light with Camera", "使用摄像机控制灯光"),
+    ("light.environmentBackground", "Create Environment Light Background Layer", "创建环境光背景图层"),
+    ("", "Material", "素材"),
+    ("material.revealSource", "Reveal Material Source in Project", "在项目中显示素材源"),
+    ("material.reset", "Reset Material", "重置素材"),
+    ("material.duplicateAssign", "Duplicate and Assign Material", "复制并分配素材"),
+    ("layer.autoTrace", "Auto-trace...", "自动追踪..."),
+    ("layer.precompose", "Pre-compose...", "预合成..."),
+    ("layer.sceneEditDetection", "Scene Edit Detection...", "场景编辑检测..."),
+    ("", "Effect", "效果"),
+    ("window.panel", "Effect Controls", "效果控件"),
+    ("effect.applyLast", "Last Effect", "上一个效果"),
+    ("effect.removeAll", "Remove All", "全部移除"),
+    ("effect.manage", "Manage Effects...", "管理效果..."),
+    ("effect.plugins.load", "Load Effect Plug-in...", "加载效果插件..."),
+    ("", "Animation", "动画"),
+    ("anim.savePreset", "Save Animation Preset...", "保存动画预设..."),
+    ("anim.applyPreset", "Apply Animation Preset...", "将动画预设应用于..."),
+    ("", "Recent Animation Presets", "最近动画预设"),
+    ("anim.clearRecentPresets", "Clear Recent Presets", "清除最近的预设"),
+    ("anim.browsePresets", "Browse Presets...", "浏览预设..."),
+    ("", "Text Animation Presets", "文本动画预设"),
+    ("layer.applyTextPreset", "Typewriter", "打字机"),
+    ("layer.applyTextPreset", "Fade Up Characters", "文字淡入"),
+    ("layer.applyTextPreset", "Bounce In Words", "单词弹跳进入"),
+    ("layer.applyTextPreset", "Tracking In", "跟踪入场"),
+    ("layer.applyTextPreset", "Scramble", "文字打乱"),
+    ("layer.applyTextPreset", "Blur In", "模糊入场"),
+    ("layer.applyTextPreset", "Jitter", "持续抖动"),
+    ("layer.applyTextPreset", "Drop In Lines", "行落入"),
+    ("anim.addKeyframe", "Add Keyframe", "设置关键帧"),
+    ("keys.toggleHold", "Toggle Hold Keyframe", "切换定格关键帧"),
+    ("keys.interpolation", "Keyframe Interpolation...", "关键帧插值..."),
+    ("keys.velocity", "Keyframe Velocity...", "关键帧速度..."),
+    ("", "Keyframe Assistant", "关键帧辅助"),
+    ("keys.audioToKeyframes", "Convert Audio to Keyframes", "将音频转换为关键帧"),
+    ("prop.convertExpressionToKeyframes", "Convert Expression to Keyframes", "将表达式转换为关键帧"),
+    ("keys.easyEase", "Easy Ease", "缓动"),
+    ("keys.easyEaseIn", "Easy Ease In", "缓入"),
+    ("keys.easyEaseOut", "Easy Ease Out", "缓出"),
+    ("keys.exponentialScale", "Exponential Scale", "指数比例"),
+    ("keys.rpfCameraImport", "RPF Camera Import", "RPF摄像机导入"),
+    ("layer.sequence", "Sequence Layers...", "序列图层..."),
+    ("keys.timeReverse", "Time-Reverse Keyframes", "时间反向关键帧"),
+    ("", "Animate Text", "动画文本"),
+    ("layer.enablePerChar3D", "Enable Per-character 3D", "启用逐字3D化"),
+    ("layer.addTextAnimator", "Anchor Point", "锚点"),
+    ("layer.addTextAnimator", "Position", "位置"),
+    ("layer.addTextAnimator", "Scale", "缩放"),
+    ("layer.addTextAnimator", "Skew", "倾斜"),
+    ("layer.addTextAnimator", "Rotation", "旋转"),
+    ("layer.addTextAnimator", "Opacity", "不透明度"),
+    ("layer.addTextAnimator", "All Transform Properties", "全部变换属性"),
+    ("", "Fill Color", "填充颜色"),
+    ("layer.addTextAnimator", "RGB", "RGB"),
+    ("layer.addTextAnimator", "Hue", "色相"),
+    ("layer.addTextAnimator", "Saturation", "饱和度"),
+    ("layer.addTextAnimator", "Brightness", "亮度"),
+    ("", "Stroke Color", "描边颜色"),
+    ("layer.addTextAnimator", "Stroke Width", "描边宽度"),
+    ("layer.addTextAnimator", "Tracking", "字符间距"),
+    ("layer.addTextAnimator", "Line Anchor", "行锚点"),
+    ("layer.addTextAnimator", "Line Spacing", "行距"),
+    ("layer.addTextAnimator", "Character Offset", "字符位移"),
+    ("layer.addTextAnimator", "Character Value", "字符值"),
+    ("layer.addTextAnimator", "Blur", "模糊"),
+    ("text.animatorFontAxes", "Variable Font Axes", "可变字体轴"),
+    ("", "Add Text Selector", "添加文本选择器"),
+    ("text.addSelector", "Range", "范围"),
+    ("text.addSelector", "Wiggly", "摆动"),
+    ("text.addSelector", "Expression", "表达式"),
+    ("text.removeAllAnimators", "Remove All Text Animators", "移除所有文本动画器"),
+    ("prop.setExpression", "Add Expression", "添加表达式"),
+    ("essential.addProperty", "Add Property to Essential Graphics", "添加到基本图形"),
+    ("prop.separateDimensions", "Separate Dimensions", "单独尺寸"),
+    ("track.camera", "Track Camera", "跟踪摄像机"),
+    ("track.warpStabilizer", "Warp Stabilizer VFX", "变形稳定器VFX"),
+    ("track.motion", "Track Motion", "跟踪运动"),
+    ("track.stabilize", "Stabilize Motion", "稳定运动"),
+    ("track.property", "Track this Property", "跟踪此属性"),
+    ("anim.reveal", "Reveal Properties with Keyframes", "显示具有关键帧的属性"),
+    ("anim.reveal", "Reveal Properties with Animation", "显示具有动画的属性"),
+    ("anim.reveal", "Reveal All Modified Properties", "显示所有修改的属性"),
+    ("", "View", "视图"),
+    ("view.newViewer", "New Viewer", "新建视图"),
+    ("view.splitLockedViewer", "Split with New Locked Viewer", "用新锁定视图拆分"),
+    ("view.zoomIn", "Zoom In", "放大"),
+    ("view.zoomOut", "Zoom Out", "缩小"),
+    ("", "Resolution", "分辨率"),
+    ("view.res.full", "Full", "完整"),
+    ("view.res.half", "Half", "二分之一"),
+    ("view.res.third", "Third", "三分之一"),
+    ("view.res.quarter", "Quarter", "四分之一"),
+    ("view.res.custom", "Custom...", "自定义..."),
+    ("view.displayColorManagement", "Use Display Color Management", "使用显示器色彩管理"),
+    ("", "Simulate Output", "模拟输出"),
+    ("view.simulateOutput", "No Output Simulation", "无输出模拟"),
+    ("view.simulateOutput", "HDTV (Rec. 709)", "HDTV (Rec. 709)"),
+    ("view.simulateOutput", "SDTV NTSC", "SDTV NTSC"),
+    ("view.simulateOutput", "SDTV PAL", "SDTV PAL"),
+    ("view.simulateOutput", "Legacy Macintosh RGB (Gamma 1.8)", "旧版 Macintosh RGB（Gamma 1.8）"),
+    ("view.simulateOutput", "Internet Standard RGB (sRGB)", "互联网标准 RGB (sRGB)"),
+    ("view.simulateOutput", "UHDTV (Rec. 2020)", "UHDTV (Rec. 2020)"),
+    ("view.simulateOutput", "Display P3", "Display P3"),
+    ("view.simulateOutput", "Linear (1.0 Gamma)", "线性（1.0 Gamma）"),
+    ("view.customRgb", "My Custom RGB...", "自定义 RGB..."),
+    ("view.simulateOutput", "Custom...", "自定义..."),
+    ("view.rulers", "Show Rulers", "显示标尺"),
+    ("", "Panel Background Color", "面板背景色"),
+    ("view.panelBackground", "Black", "黑色"),
+    ("view.panelBackground", "Dark Gray", "深灰色"),
+    ("view.panelBackground", "Medium Gray (Default)", "中灰色（默认）"),
+    ("view.panelBackground", "Light Gray", "浅灰色"),
+    ("view.panelBackground", "White", "白色"),
+    ("view.panelBackground", "Custom", "自定义"),
+    ("view.panelBackground", "Select Custom Background Color...", "选择自定义背景色..."),
+    ("view.guides", "Show Guides", "显示参考线"),
+    ("view.snapToGuides", "Snap to Guides", "对齐参考线"),
+    ("view.lockGuides", "Lock Guides", "锁定参考线"),
+    ("view.addGuide", "Add Guide...", "添加参考线..."),
+    ("view.clearGuides", "Clear Guides", "清除参考线"),
+    ("view.importGuides", "Import Guides...", "导入参考线..."),
+    ("view.exportGuides", "Export Guides...", "导出参考线..."),
+    ("view.grid", "Show Grid", "显示网格"),
+    ("view.snapToGrid", "Snap to Grid", "对齐网格"),
+    ("view.snapping", "Snapping", "对齐"),
+    ("view.options", "View Options...", "视图选项..."),
+    ("view.layerControls", "Show Layer Controls", "显示图层控件"),
+    ("", "Switch View Layout", "切换视图布局"),
+    ("view.layout", "1 View", "1 个视图"),
+    ("view.layout", "2 Views", "2 个视图"),
+    ("view.layout", "4 Views", "4 个视图"),
+    ("view.shareViewOptions", "Share View Options", "共享视图选项"),
+    ("", "Switch 3D View", "切换 3D 视图"),
+    ("view.3d.activeCamera", "Active Camera", "活动摄像机"),
+    ("view.3d.default", "Default", "默认"),
+    ("view.3d.front", "Front", "前"),
+    ("view.3d.left", "Left", "左"),
+    ("view.3d.top", "Top", "顶"),
+    ("view.3d.back", "Back", "后"),
+    ("view.3d.right", "Right", "右"),
+    ("view.3d.bottom", "Bottom", "底"),
+    ("view.3d.custom1", "Custom View 1", "自定义视图 1"),
+    ("view.3d.custom2", "Custom View 2", "自定义视图 2"),
+    ("view.3d.custom3", "Custom View 3", "自定义视图 3"),
+    ("", "Assign Shortcut to 3D View", "为 3D 视图分配快捷键"),
+    ("view.3d.last", "Switch to Last 3D View", "切换到上一个 3D 视图"),
+    ("view.lookAtSelected", "Look at Selected Layers", "查看选定图层"),
+    ("view.lookAtAll", "Look at All Layers", "查看所有图层"),
+    ("time.set", "Go to Time...", "转到时间..."),
+    ("view.fullScreen", "Enter Full Screen", "进入全屏"),
+    ("", "Window", "窗口"),
+    ("", "Workspace", "工作区"),
+    ("window.workspace", "Default", "默认"),
+    ("window.workspace", "Review", "审阅"),
+    ("window.workspace", "Learn", "学习"),
+    ("window.workspace", "Small Screen", "小屏幕"),
+    ("window.workspace", "Standard", "标准"),
+    ("window.workspace", "All Panels", "所有面板"),
+    ("window.workspace", "Animation", "动画"),
+    ("window.workspace", "Color", "颜色"),
+    ("window.workspace", "Effects", "效果"),
+    ("window.workspace", "Essential Graphics", "基本图形"),
+    ("window.workspace", "Minimal", "最小"),
+    ("window.workspace", "Motion Tracking", "运动跟踪"),
+    ("window.workspace", "Paint", "绘画"),
+    ("window.workspace", "Text", "文本"),
+    ("window.workspace", "Undocked Panels", "未停靠面板"),
+    ("window.resetWorkspace", "Reset to Saved Layout", "重置为已保存的布局"),
+    ("window.saveWorkspace", "Save Changes to this Workspace", "保存对此工作区的更改"),
+    ("window.saveWorkspaceAs", "Save as New Workspace...", "另存为新工作区..."),
+    ("window.editWorkspaces", "Edit Workspaces...", "编辑工作区..."),
+    ("", "Assign Shortcut to Workspace", "为工作区分配快捷键"),
+    ("window.panel", "Align", "对齐"),
+    ("window.panel", "Audio", "音频"),
+    ("window.panel", "Brushes", "画笔"),
+    ("window.panel", "Character", "字符"),
+    ("window.panel", "Content-Aware Fill", "内容识别填充"),
+    ("window.panel", "Effects & Presets", "效果和预设"),
+    ("window.panel", "Essential Graphics", "基本图形"),
+    ("window.panel", "Info", "信息"),
+    ("help.inAppTutorials", "Learn", "学习"),
+    ("window.panel", "Lumetri Scopes", "Lumetri 范围"),
+    ("window.panel", "Mask Interpolation", "蒙版插值"),
+    ("window.panel", "Media Browser", "媒体浏览器"),
+    ("window.panel", "Metadata", "元数据"),
+    ("window.panel", "Motion Sketch", "运动草图"),
+    ("window.panel", "Paint", "绘画"),
+    ("window.panel", "Paragraph", "段落"),
+    ("window.panel", "Preview", "预览"),
+    ("window.panel", "Progress", "进度"),
+    ("window.panel", "Properties", "属性"),
+    ("window.panel", "Script Console", "脚本控制台"),
+    ("window.panel", "Smoother", "平滑器"),
+    ("window.panel", "Tools", "工具"),
+    ("window.panel", "Tracker", "跟踪器"),
+    ("window.panel", "Wiggler", "摇摆器"),
+    ("window.panel", "Composition", "合成"),
+    ("window.panel", "Flowchart", "流程图"),
+    ("window.panel", "Footage", "素材"),
+    ("window.panel", "Layer", "图层"),
+    ("window.panel", "Project", "项目"),
+    ("window.panel", "Render Queue", "渲染队列"),
+    ("window.panel", "Timeline", "时间轴"),
+    ("window.panel", "Create Nulls From Paths", "从路径创建空对象"),
+    ("window.panel", "Ease Presets", "缓动预设"),
+    ("window.panel", "VR Comp Editor", "VR 合成编辑器"),
+    ("", "Help", "帮助"),
+    ("help.docs", "EffectCraft Help...", "EffectCraft 帮助..."),
+    ("help.docs", "Scripting Help...", "脚本帮助..."),
+    ("help.docs", "Expression Reference...", "表达式参考..."),
+    ("help.docs", "Effect Reference...", "效果参考..."),
+    ("anim.browsePresets", "Animation Presets...", "动画预设..."),
+    ("app.keyboardShortcuts", "Keyboard Shortcuts...", "键盘快捷键..."),
+    ("help.inAppTutorials", "In-App Tutorials...", "应用内教程..."),
+    ("help.onlineTutorials", "Online Tutorials...", "在线教程..."),
+    ("help.systemReport", "System Compatibility Report...", "系统兼容性报告..."),
+    ("help.enableLogging", "Enable Logging", "启用日志记录"),
+    ("help.revealLogFile", "Reveal Logging File", "显示日志文件"),
+    ("help.discord", "Join the ArtCraft Discord...", "加入 ArtCraft Discord..."),
+    ("help.reportIssue", "Provide Feedback...", "提供反馈..."),
+    ("help.website", "ArtCraft Website", "ArtCraft 网站"),
+    ("help.appPage", "EffectCraft Home Page", "EffectCraft 主页"),
+    ("help.github", "EffectCraft on GitHub", "GitHub 上的 EffectCraft"),
+    ("file.openDemoProject", "Open Demo Project", "打开演示项目"),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,18 +1381,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn every_translation_key_exists_in_the_actual_menu_tree() {
-        let mut actual = BTreeSet::new();
-        for mac in [false, true] {
-            keys(&parse(TREE, mac).unwrap(), &mut actual);
-        }
+    /// Checks one catalog against the real tree and returns the keys it translated: every entry
+    /// must name a real menu row, be unique, carry text, and cover the whole fixed tree.
+    fn check_catalog(catalog: &[(&str, &str, &str)], actual: &BTreeSet<(String, String)>) -> BTreeSet<(String, String)> {
         let mut unique = BTreeSet::new();
-        for (command, en, ja) in JAPANESE {
+        for (command, en, translated) in catalog {
             let key = (command.to_string(), en.to_string());
             assert!(actual.contains(&key), "stale translation: {key:?}");
             assert!(unique.insert(key), "duplicate translation: {command} / {en}");
-            assert!(!ja.is_empty());
+            assert!(!translated.is_empty());
         }
         // All fixed TREE entries are covered; @effects is a generated plug-in catalog,
         // whose product/effect names are intentionally left as registered.
@@ -742,6 +1402,36 @@ mod tests {
             let en = parts.next().unwrap();
             let command = parts.next().and_then(|p| p.split_whitespace().next()).unwrap_or("");
             assert!(unique.contains(&(command.into(), en.into())), "untranslated fixed entry: {line}");
+        }
+        unique
+    }
+
+    #[test]
+    fn every_translation_key_exists_in_the_actual_menu_tree() {
+        let mut actual = BTreeSet::new();
+        for mac in [false, true] {
+            keys(&parse(TREE, mac).unwrap(), &mut actual);
+        }
+        let japanese = check_catalog(JAPANESE, &actual);
+        let chinese = check_catalog(SIMPLIFIED_CHINESE, &actual);
+        assert_eq!(japanese, chinese, "the languages must translate the same entries");
+    }
+
+    /// A translation keeps what the source row says structurally: an ellipsis still opens a
+    /// dialog, and brackets and slots survive. Chinese sets brackets full width, so both widths
+    /// count as the same bracket.
+    #[test]
+    fn every_chinese_entry_keeps_the_english_shape() {
+        for (command, en, zh) in SIMPLIFIED_CHINESE {
+            assert_eq!(en.contains("..."), zh.contains("..."), "{command} / {en}: {zh}");
+            let slots = |s: &str| s.chars().filter(|c| *c == '{' || *c == '}').count();
+            assert_eq!(slots(en), slots(zh), "{command} / {en}: {zh}");
+            // English marks an optional plural with `(s)`, and Chinese has no plural to mark, so
+            // that one bracket pair may be dropped. Every other bracket must survive.
+            let english = en.replace("(s)", "");
+            let brackets = |s: &str| s.chars().filter(|c| matches!(c, '(' | ')' | '（' | '）')).count();
+            assert_eq!(brackets(&english), brackets(zh), "{command} / {en}: {zh}");
+            assert!(!zh.contains("  "), "{command} / {en}: {zh}");
         }
     }
 
@@ -771,7 +1461,30 @@ mod tests {
         assert!(ja.items().iter().any(|i| i.command == "layer.newText" && i.label == "テキスト"));
         assert!(ja.items().iter().any(|i| i.command == "keys.easyEase" && i.label == "イージーイーズ"));
         app.session.prefs.push_recent("/tmp/File.ecproj");
-        assert!(crate::native_menu::build(&app).items().iter().any(|i| i.command == "file.openRecent" && i.label == "File.ecproj"));
+        let ja = crate::native_menu::build(&app);
+        assert!(ja.items().iter().any(|i| i.command == "file.openRecent" && i.label == "File.ecproj"));
+        // Simplified Chinese: the same commands, parameters and shortcuts, translated labels.
+        app.session.execute("prefs.set", json!({"key":"general.language", "value":"zh-cn"})).unwrap();
+        assert_ne!(state, crate::native_menu::state_key(&app));
+        let zh = crate::native_menu::build(&app);
+        assert_eq!(bindings(&ja), bindings(&zh));
+        assert_eq!(label(&app, "", "Composition"), "合成");
+        assert_eq!(label(&app, "unknown.command", "Text"), "Text");
+        assert_eq!(
+            entry(
+                &app,
+                &MenuEntry { label: "Layer".into(), command: "window.panel".into(), params: json!({"panel":"layer"}), shortcut: None },
+                "Layer: File".into()
+            ),
+            "图层: File"
+        );
+        assert_eq!(submenu(&app, "Assign Shortcut to 3D View", "Assign Shortcut to “Top”".into()), "为“Top”分配快捷键");
+        assert_eq!(submenu(&app, "Assign Shortcut to Workspace", "Assign Shortcut to “Editing” Workspace".into()), "为工作区“Editing”分配快捷键");
+        assert!(zh.items().iter().any(|i| i.command == "comp.new" && i.label == "新建合成..."));
+        assert!(zh.items().iter().any(|i| i.command == "layer.newText" && i.label == "文本"));
+        assert!(zh.items().iter().any(|i| i.command == "keys.easyEase" && i.label == "缓动"));
+        // A user's own file name stays verbatim in every language.
+        assert!(zh.items().iter().any(|i| i.command == "file.openRecent" && i.label == "File.ecproj"));
         app.session.execute("prefs.set", json!({"key":"general.language", "value":"en"})).unwrap();
         assert_eq!(label(&app, "", "Composition"), "Composition");
     }
@@ -781,6 +1494,15 @@ mod tests {
             (Some("ja-JP"), "ja"),
             (Some("ja"), "ja"),
             (Some("JA_jp.UTF-8"), "ja"),
+            (Some("zh-CN"), "zh-cn"),
+            (Some("zh"), "zh-cn"),
+            (Some("zh_Hans_CN.UTF-8"), "zh-cn"),
+            (Some("zh-SG"), "zh-cn"),
+            // Traditional Chinese has no catalog yet: it stays English rather than showing
+            // Simplified text under a Traditional locale.
+            (Some("zh-TW"), "en"),
+            (Some("zh-Hant"), "en"),
+            (Some("zh-HK"), "en"),
             (Some("en-US"), "en"),
             (Some("jv-ID"), "en"),
             (Some("de-DE"), "en"),
@@ -790,9 +1512,11 @@ mod tests {
         }
         let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
         assert_eq!(app.session.prefs.general.language, "system", "the default");
-        assert_eq!(japanese(&app), system_language() == "ja");
+        assert_eq!(language(&app), system_language());
         app.session.execute("prefs.set", json!({"key":"general.language", "value":"ja"})).unwrap();
-        assert!(japanese(&app));
+        assert_eq!(language(&app), "ja");
+        app.session.execute("prefs.set", json!({"key":"general.language", "value":"zh-cn"})).unwrap();
+        assert_eq!(language(&app), "zh-cn");
     }
 
     #[test]

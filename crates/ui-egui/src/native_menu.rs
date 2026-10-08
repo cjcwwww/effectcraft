@@ -180,13 +180,15 @@ pub fn build(app: &EffectcraftApp) -> NativeMenu {
                         _ => None,
                     };
                     if let Some(role) = role {
-                        // Services sits just above Hide, as in every Mac app.
+                        // Services sits just above Hide, as in every Mac app. macOS draws this
+                        // menu itself, so its title is the one label outside the catalog.
                         if role == Role::Hide && !services_added {
-                            out.push(NativeNode::Predefined {
-                                role: Role::Services,
-                                label: if crate::i18n::japanese(app) { "サービス" } else { "Services" }.into(),
-                                command: String::new(),
-                            });
+                            let services = match crate::i18n::language(app) {
+                                "ja" => "サービス",
+                                "zh-cn" => "服务",
+                                _ => "Services",
+                            };
+                            out.push(NativeNode::Predefined { role: Role::Services, label: services.into(), command: String::new() });
                             out.push(NativeNode::Separator);
                             services_added = true;
                         }
