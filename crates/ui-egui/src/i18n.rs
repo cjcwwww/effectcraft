@@ -325,7 +325,7 @@ const SIMPLIFIED_CHINESE: &[(&str, &str, &str)] = &[
     ("comp.saveFrameAs", "File...", "文件..."),
     ("comp.saveFrameAsPsd", "Photoshop Layers...", "Photoshop 图层..."),
     ("comp.saveFrameAsExr", "ProEXR...", "ProEXR..."),
-    ("render.preRender", "Pre-render...", "帧渲染..."),
+    ("render.preRender", "Pre-render...", "预渲染..."),
     ("render.saveCurrentPreview", "Save Current Preview...", "保存当前预览..."),
     ("comp.openInEssentialGraphics", "Open in Essential Graphics", "在基本图形中打开"),
     ("", "Responsive Design — Time", "响应式设计 — 时间"),
