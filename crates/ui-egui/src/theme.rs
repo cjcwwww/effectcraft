@@ -295,27 +295,44 @@ fn build_fonts(language: &str) -> FontDefinitions {
     fonts.families.insert(FontFamily::Name("semibold".into()), vec!["inter-semibold".into(), "inter".into()]);
     fonts.families.insert(FontFamily::Name("medium".into()), vec!["inter-medium".into(), "inter".into()]);
     // Reuse the text engine's script-aware system fallback (#84), without embedding a CJK font.
-    // The probe follows the UI language: a Japanese face can lack the Simplified-only glyphs
-    // (`汉`, `简`, `视`) a Chinese UI needs, while a Chinese face would draw shared Han the Chinese
-    // way for a Japanese UI. The text engine only returns a family that covers the character, so
-    // the Chinese probe finds the Chinese family on any platform, and no family at all when the
-    // machine has none installed.
+    // Settings ▸ General ▸ Language names every language in its own script (`日本語`, `简体中文`)
+    // whichever one is active, so the stack has to cover both: a Japanese face has no
+    // Simplified-only glyphs (`汉`, `简`, `视`), and a Chinese face draws shared Han the Chinese
+    // way. Both faces are appended and the active language only decides their order, so shared Han
+    // keeps the reader's own shapes and the other face supplies what it lacks. A face is used only
+    // when it draws the whole sample, and never twice, so a machine with one CJK family loads it
+    // once and a machine with none simply falls through to the replacement glyph.
     #[cfg(not(target_arch = "wasm32"))]
     {
         use effectcraft_text::fonts;
         let base = fonts::resolve("Inter", "Regular").face;
-        let probe = if language == "zh-cn" { '汉' } else { 'あ' };
-        let face = fonts::face(fonts::fallback_for(probe, base));
-        if face.has_char(probe)
-            && let Some(font) = face.font()
-        {
+        // `汉`, `简`, `视` and `统` have no Japanese form, so only a Chinese face draws all four;
+        // kana is unambiguously Japanese.
+        let chinese = "汉简视统";
+        let japanese = "あ";
+        let order = if language == "zh-cn" { [chinese, japanese] } else { [japanese, chinese] };
+        let mut chosen: Vec<fonts::FaceId> = Vec::new();
+        for probe in order {
+            // A family that draws the whole sample, not just its first character.
+            let found = probe.chars().map(|c| fonts::fallback_for(c, base)).find(|id| {
+                let face = fonts::face(*id);
+                probe.chars().all(|p| face.has_char(p))
+            });
+            let Some(id) = found else { continue };
+            if chosen.contains(&id) {
+                continue;
+            }
+            let face = fonts::face(id);
+            let Some(font) = face.font() else { continue };
             // Use the already-read, parsed bytes rather than reading a font file twice.
             let mut data = FontData::from_owned(font.data().as_bytes().to_vec());
             data.index = face.info.index;
-            fonts.font_data.insert("cjk-system".into(), Arc::new(data));
+            let name = if probe == chinese { "cjk-system-chinese" } else { "cjk-system-japanese" };
+            fonts.font_data.insert(name.into(), Arc::new(data));
             for family in fonts.families.values_mut() {
-                family.push("cjk-system".into());
+                family.push(name.into());
             }
+            chosen.push(id);
         }
     }
     fonts
@@ -431,5 +448,23 @@ mod cjk_font_tests {
         let ctx = egui::Context::default();
         super::install_for_language(&ctx, &super::Tokens::for_kind(super::ThemeKind::Dark), "zh-cn");
         assert_family_coverage(&ctx, "汉字简体视图图层效果设置");
+    }
+
+    /// Settings ▸ General ▸ Language offers every language by its own name whatever the active
+    /// one is, so `简体中文` has to draw in an English or Japanese UI too. The Japanese face alone
+    /// leaves `简` (and `汉`, `视`, `统`) as replacement boxes.
+    #[test]
+    fn the_chinese_language_name_draws_in_an_english_and_a_japanese_ui() {
+        use effectcraft_text::fonts;
+        let base = fonts::resolve("Inter", "Regular").face;
+        if !fonts::face(fonts::fallback_for('汉', base)).has_char('汉') {
+            eprintln!("no Chinese system font installed; skipping glyph coverage");
+            return;
+        }
+        for language in ["en", "ja"] {
+            let ctx = egui::Context::default();
+            super::install_for_language(&ctx, &super::Tokens::for_kind(super::ThemeKind::Dark), language);
+            assert_family_coverage(&ctx, "简体中文");
+        }
     }
 }
